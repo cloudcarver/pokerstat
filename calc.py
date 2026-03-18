@@ -1,7 +1,11 @@
-from enum import Enum
-from typing import List
+import argparse
 import copy
+import os
 import random
+from concurrent.futures import ProcessPoolExecutor
+from enum import Enum
+from pathlib import Path
+from typing import List
 DIAMOND = "♦️"
 HEART = "♥️"
 SPADE = "♠️"
@@ -71,7 +75,7 @@ class Card:
     def __ge__(self, x):
         return self._val >= x._val
     def __eq__(self, x):
-        return self._val == x._val
+        return isinstance(x, Card) and self._hash == x._hash
     def __lt__(self, x):
         return self._val < x._val
     def __hash__(self):
@@ -197,15 +201,19 @@ class Group:
     def __str__(self):
         return f'{self.cards}'
 
+def is_wheel(cards_list: List[Card]) -> bool:
+    nums_list = sorted(int(card.num) for card in cards_list)
+    return nums_list == [2, 3, 4, 5, 14]
+
 class StraightFlushGroup(Group):
     def __init__(self, cards_list: List[Card], inputVal=None):
         self.cards = sorted(cards_list)
         val = self.calcVal() if inputVal == None else inputVal
         super().__init__(self.cards, GroupType.STRAIGHT_FLUSH, val)
-
-G = [cards[SPADE][N2], cards[SPADE][N3], cards[SPADE][N4], cards[SPADE][N5], cards[SPADE][N6]]
-print(G)
-print(hex(int(StraightFlushGroup(G))))
+    def calcVal(self):
+        if is_wheel(self.cards):
+            return 0x54321
+        return super().calcVal()
 
 class FourOakGroup(Group):
     def __init__(self, cards_list: List[Card]):
@@ -213,7 +221,7 @@ class FourOakGroup(Group):
         val = self.calcVal()
         super().__init__(self.cards, GroupType.FOUR_OAK, val)
     def calcVal(self):
-        if self.cards[0] == self.cards[1]:
+        if self.cards[0].num == self.cards[1].num:
             kindCard = self.cards[0]
             singleCard = self.cards[4]
         else:
@@ -221,9 +229,6 @@ class FourOakGroup(Group):
             singleCard = self.cards[0]
         val = (int(kindCard.num) << 4) + int(singleCard.num)
         return val
-G = [cards[SPADE][N2], cards[DIAMOND][N2], cards[CLUB][N2], cards[HEART][N2], cards[CLUB][N6]]
-print(G)
-print(hex(int(FourOakGroup(G))))
 
 class FullHouseGroup(Group):
     def __init__(self, cards_list: List[Card]):
@@ -231,7 +236,7 @@ class FullHouseGroup(Group):
         val = self.calcVal()
         super().__init__(self.cards, GroupType.FULL_HOUSE, val)
     def calcVal(self):
-        if self.cards[1] == self.cards[2]:
+        if self.cards[1].num == self.cards[2].num:
             triCard = self.cards[0]
             dualCard = self.cards[4]
         else:
@@ -239,9 +244,6 @@ class FullHouseGroup(Group):
             dualCard = self.cards[0]
         val = (int(triCard.num) << 4) + int(dualCard.num)
         return val
-G = [cards[SPADE][N2], cards[DIAMOND][N2], cards[CLUB][N2], cards[HEART][N6], cards[SPADE][N6]]
-print(G)
-print(hex(int(FullHouseGroup(G))))
 
 class FlushGroup(Group):
     def __init__(self, cards_list: List[Card]):
@@ -249,19 +251,35 @@ class FlushGroup(Group):
         val = self.calcVal()
         super().__init__(self.cards, GroupType.FLUSH, val)
 
-G = [cards[DIAMOND][NA], cards[DIAMOND][N3], cards[DIAMOND][N5], cards[DIAMOND][N6], cards[DIAMOND][N7]]
-print(G)
-print(hex(int(FlushGroup(G))))
-
 class StraghitGroup(Group):
     def __init__(self, cards_list: List[Card], inputVal=None):
         self.cards = sorted(cards_list)
         val = self.calcVal() if inputVal == None else inputVal
         super().__init__(self.cards, GroupType.STRAIGHT, val)
+    def calcVal(self):
+        if is_wheel(self.cards):
+            return 0x54321
+        return super().calcVal()
 
-G = [cards[SPADE][N2], cards[DIAMOND][N3], cards[CLUB][N4], cards[HEART][N5], cards[SPADE][NA]]
-print(G)
-print(hex(int(StraghitGroup(G))))
+class ThreeOakGroup(Group):
+    def __init__(self, cards_list: List[Card]):
+        self.cards = sorted(cards_list)
+        val = self.calcVal()
+        super().__init__(self.cards, GroupType.THREE_OAK, val)
+    def calcVal(self):
+        count = {}
+        for i in range(0, 5):
+            n = int(self.cards[i].num)
+            count[n] = 1 if not (n in count) else (count[n] + 1)
+        tmp = []
+        for c in count:
+            if count[c] == 3:
+                triNum = c
+            else:
+                tmp.append(c)
+        tmp.sort()
+        val = (int(triNum) << 8) + (int(tmp[1]) << 4) + int(tmp[0])
+        return val
 
 class TwoPairsGroup(Group):
     def __init__(self, cards_list: List[Card]):
@@ -282,10 +300,6 @@ class TwoPairsGroup(Group):
         tmp.sort()
         val = int(single) + (int(tmp[0]) << 4) + (int(tmp[1]) << 8)
         return val 
-
-G = [cards[SPADE][N2], cards[DIAMOND][N2], cards[CLUB][N4], cards[HEART][N4], cards[SPADE][NA]]
-print(G)
-print(hex(int(TwoPairsGroup(G))))
 
 class PairGroup(Group):
     def __init__(self, cards_list: List[Card]):
@@ -313,18 +327,20 @@ class HighCardGroup(Group):
         val = self.calcVal()
         super().__init__(self.cards, GroupType.HIGH_CARD, val)
 
-G = [cards[SPADE][NJ], cards[DIAMOND][N2], cards[CLUB][N6], cards[HEART][N4], cards[SPADE][NA]]
-print(G)
-print(hex(int(HighCardGroup(G))))
-
 StraightFlushGroupSet = set()
 FourOakGroupSet = set()
 FullHouseGroupSet = set()
 FlushGroupSet = set()
 StraghitGroupSet = set()
 TwoPairsGroupSet = set()
-def calculate_group_set():
-    print("calculating straight flush...")
+group_sets_ready = False
+
+def calculate_group_set(verbose=True):
+    global group_sets_ready
+    if group_sets_ready:
+        return
+    if verbose:
+        print("calculating straight flush...")
     for suite in suites:
         for i in range(0, len(nums) - 4):
             tmp = []
@@ -334,9 +350,10 @@ def calculate_group_set():
             StraightFlushGroupSet.add(hash(g))
         StraightFlushGroupSet.add(hash(StraightFlushGroup(
             [cards[suite][NA], cards[suite][N2], cards[suite][N3], cards[suite][N4], cards[suite][N5]],
-            0x954321
+            0x54321
         )))
-    print("calculating four of a kind...")
+    if verbose:
+        print("calculating four of a kind...")
     nums_set = set()
     for i in range(0, len(nums)):
         nums_set.add(nums[i])
@@ -351,7 +368,8 @@ def calculate_group_set():
                 ttmp = copy.copy(tmp)
                 ttmp.append(cards[suite][r])
                 FourOakGroupSet.add(hash(FourOakGroup(ttmp)))
-    print("calculating full house...")
+    if verbose:
+        print("calculating full house...")
     for tri_num in nums_set:
         for du_num in nums_set:
             if tri_num == du_num:
@@ -362,7 +380,8 @@ def calculate_group_set():
                         for d1 in range(0, 4):
                             for d2 in range(d1 + 1, 4):
                                 FullHouseGroupSet.add(hash(FullHouseGroup([cards[suites[s1]][tri_num], cards[suites[s2]][tri_num], cards[suites[s3]][tri_num], cards[suites[d1]][du_num], cards[suites[d2]][du_num]])))
-    print("calculating flush...")
+    if verbose:
+        print("calculating flush...")
     for s in suites:
         for n1 in range(0, len(nums)):
             for n2 in range(n1 + 1, len(nums)):
@@ -373,7 +392,8 @@ def calculate_group_set():
                             if n5 == (n4 + 1) == (n3 + 2) == (n2 + 3) == (n1 + 4) or (n1 == 0 and n2 == 1 and n3 == 2 and n4 == 3 and n5 == 12):
                                 continue
                             FlushGroupSet.add(hash(g))
-    print("calculating straight...")
+    if verbose:
+        print("calculating straight...")
     for s1 in suites:
         for s2 in suites:
             for s3 in suites:
@@ -383,8 +403,9 @@ def calculate_group_set():
                             continue
                         for i in range(0, len(nums) - 4):
                             StraghitGroupSet.add(hash(StraghitGroup([cards[s1][nums[i]], cards[s2][nums[i + 1]], cards[s3][nums[i + 2]], cards[s4][nums[i + 3]], cards[s5][nums[i + 4]]])))
-                        StraghitGroupSet.add(hash(StraghitGroup([cards[s1][NA], cards[s2][N2], cards[s3][N3], cards[s4][N4], cards[s5][N5]], 0x554321)))
-    print("calculating two pairs...")
+                        StraghitGroupSet.add(hash(StraghitGroup([cards[s1][NA], cards[s2][N2], cards[s3][N3], cards[s4][N4], cards[s5][N5]], 0x54321)))
+    if verbose:
+        print("calculating two pairs...")
     for p1 in nums_set:
         for p2 in nums_set:
             if p1 == p2:
@@ -404,11 +425,13 @@ def calculate_group_set():
                                         cards[suites[s22]][p2],
                                         cards[suites[s30]][p3],
                                     ])))
+    group_sets_ready = True
 
 def get_group(cards) -> Group:
+    calculate_group_set(verbose=False)
     hashVal = hash_card_list(cards)
     if hashVal in StraightFlushGroupSet:
-        return StraghitGroup(cards)
+        return StraightFlushGroup(cards)
     elif hashVal in FourOakGroupSet:
         return FourOakGroup(cards)
     elif hashVal in FullHouseGroupSet:
@@ -416,15 +439,17 @@ def get_group(cards) -> Group:
     elif hashVal in FlushGroupSet:
         return FlushGroup(cards)
     elif hashVal in StraghitGroupSet:
-        return StraightFlushGroup(cards)
+        return StraghitGroup(cards)
     elif hashVal in TwoPairsGroupSet:
         return TwoPairsGroup(cards)
     count = {}
     for card in cards:
-        count[card] = 1 if not (card in count) else (count[card] + 1)
-    for card in count:
-        if count[card] == 2:
-            return PairGroup(cards)
+        n = int(card.num)
+        count[n] = 1 if not (n in count) else (count[n] + 1)
+    if 3 in count.values():
+        return ThreeOakGroup(cards)
+    if 2 in count.values():
+        return PairGroup(cards)
     return HighCardGroup(cards)
 
 def combination(candidates: list, num: int) -> list:
@@ -439,23 +464,29 @@ def combination(candidates: list, num: int) -> list:
             tmp.append(new_combination)
     return tmp
 
-def calculate_all_in(num_players, iteration=1000):
-    print(f'vs {num_players} player{"s" if num_players > 1 else ""}, iteration: {iteration}')
+def get_hand_keys():
+    keys = []
+    for n1 in range(len(nums) - 1, -1, -1):
+        for n2 in range(n1, -1, -1):
+            if n1 != n2:
+                keys.append(f'{nums[n1]}{nums[n2]}同色')
+            keys.append(f'{nums[n1]}{nums[n2]}异色')
+    return keys
+
+
+def calculate_all_in(num_players, iteration=1000, verbose=True):
+    calculate_group_set(verbose=verbose)
+    if verbose:
+        print(f'vs {num_players} player{"s" if num_players > 1 else ""}, iteration: {iteration}')
     flattern_cards = []
     for s in suites:
         for n in nums:
             flattern_cards.append(cards[s][n])
     all_possible_hands = combination(flattern_cards, 2)
-    # all_possible_hands = [[cards[SPADE][NA], cards[DIAMOND][NA]]]
     for hands in all_possible_hands:
         hands.sort(reverse=True)
 
-    win_count = {}
-    for n1 in range(len(nums) - 1, -1, -1):
-        for n2 in range(n1, -1, -1):
-            if n1 != n2:
-                win_count[f'{nums[n1]}{nums[n2]}同色'] = [0, 0]
-            win_count[f'{nums[n1]}{nums[n2]}异色'] = [0, 0]
+    win_count = {key: [0.0, 0] for key in get_hand_keys()}
     epoch = 0
     for _ in range(iteration):
         for hands in all_possible_hands:
@@ -465,39 +496,98 @@ def calculate_all_in(num_players, iteration=1000):
             def roll():
                 while True:
                     new_card = flattern_cards[random.randint(0, len(flattern_cards) - 1)]
-                    if not (new_card in cards_on_table):   
+                    if not (new_card in cards_on_table):
                         break
                 cards_on_table.add(new_card)
                 return new_card
             deals = [roll() for _ in range(5)]
-            win_this_turn = True
+            hero_pts = highest_point(hands, deals)
+            shared_winners = 1
+            lose_this_turn = False
             for _ in range(0, num_players):
                 c1 = roll()
                 c2 = roll()
-                if not win(hands, [c1, c2], deals):
-                    win_this_turn = False
+                opp_pts = highest_point([c1, c2], deals)
+                if opp_pts > hero_pts:
+                    lose_this_turn = True
                     break
+                if opp_pts == hero_pts:
+                    shared_winners += 1
             key = f'{hands[0].num}{hands[1].num}{"同色" if hands[0].suite == hands[1].suite else "异色"}'
-            if win_this_turn:    
-                win_count[key][0] += 1
-            else:
-                win_count[key][1] += 1
+            if not lose_this_turn:
+                win_count[key][0] += 1 / shared_winners
+            win_count[key][1] += 1
         epoch += 1
-        print("epoch: " + str(epoch) + "/" + str(iteration))
-    
-    tmp = []
-    for k in win_count:
-        if win_count[k][0] + win_count[k][1] == 0:
+        if verbose:
+            print("epoch: " + str(epoch) + "/" + str(iteration))
+
+    result = {}
+    for key in get_hand_keys():
+        if win_count[key][1] == 0:
             continue
-        tmp.append([k, round((win_count[k][0] / (win_count[k][0] + win_count[k][1])) * 100, 2)])
-    tmp.sort(key=lambda x: x[1])
-    for t in tmp:
-        t[1] = f'{t[1]}%'
-    print(tmp)
+        result[key] = round((win_count[key][0] / win_count[key][1]) * 100, 2)
+    return result
+
+
+def format_pct(val):
+    text = f'{val:.2f}'.rstrip('0').rstrip('.')
+    return f'{text}%'
+
+
+def build_readme(results_by_players):
+    headers = [f'{num_players + 1}p' for num_players in sorted(results_by_players.keys())]
+    lines = [
+        '# Poker Stat',
+        '蒙特卡洛法计算盲注all in胜率',
+        '',
+        '| 组合 | ' + ' | '.join(headers) + ' |',
+        '| --- | ' + ' | '.join(['---'] * len(headers)) + ' |',
+    ]
+    for key in get_hand_keys():
+        row = [key]
+        for num_players in sorted(results_by_players.keys()):
+            row.append(format_pct(results_by_players[num_players][key]))
+        lines.append('| ' + ' | '.join(row) + ' |')
+    return '\n'.join(lines) + '\n'
+
+
+def _calculate_all_in_task(args):
+    num_players, iteration = args
+    calculate_group_set(verbose=False)
+    return num_players, calculate_all_in(num_players, iteration, verbose=False)
+
+
+def generate_readme(iteration=500, output_path='README.md', workers=1):
+    workers = max(1, workers)
+    tasks = [(num_players, iteration) for num_players in range(1, 8)]
+    results_by_players = {}
+
+    if workers == 1:
+        calculate_group_set()
+        for num_players, _ in tasks:
+            results_by_players[num_players] = calculate_all_in(num_players, iteration)
+    else:
+        print(f'parallel workers: {workers}')
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            for num_players, result in executor.map(_calculate_all_in_task, tasks):
+                results_by_players[num_players] = result
+
+    content = build_readme(results_by_players)
+    Path(output_path).write_text(content)
+    print(f'generated {output_path}')
+
+
+def compare_hands(a_hands, b_hands, deals):
+    a_pts = highest_point(a_hands, deals)
+    b_pts = highest_point(b_hands, deals)
+    if a_pts > b_pts:
+        return 1
+    if a_pts < b_pts:
+        return -1
+    return 0
 
 def win(a_hands, b_hands, deals):
-    rtn = highest_point(a_hands, deals) > highest_point(b_hands, deals)
-    # print(a_hands, b_hands, deals, "win" if rtn else "lose")
+    rtn = compare_hands(a_hands, b_hands, deals) > 0
     return rtn
 
 def get(suite, num):
@@ -512,11 +602,19 @@ def highest_point(hands, deals):
             pts = g._val
     return pts
 
-calculate_group_set()
-calculate_all_in(1, 500)
-# calculate_all_in(2, 500)
-# calculate_all_in(3, 500)
-# calculate_all_in(4, 500)
-# calculate_all_in(5, 500)
-# calculate_all_in(6, 500)
-# calculate_all_in(7, 500)
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--iteration', type=int, default=500)
+    parser.add_argument('--output', default='README.md')
+    parser.add_argument('--workers', type=int, default=1)
+    parser.add_argument('--auto-workers', action='store_true')
+    return parser.parse_args()
+
+
+if __name__ == '__main__':
+    args = parse_args()
+    workers = args.workers
+    if args.auto_workers:
+        workers = os.cpu_count() or 1
+    generate_readme(args.iteration, args.output, workers)
